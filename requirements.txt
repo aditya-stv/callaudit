@@ -1,0 +1,13 @@
+streamlit
+pandas
+matplotlib
+scikit-learn
+statsmodels
+networkx
+plotly
+reportlab
+Pillow
+numpy
+statsmodels
+google-genai
+requests
