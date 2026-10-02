@@ -1,6 +1,6 @@
 # Android Forensic Auditor (CallAudit)
 
-A Streamlit web application for **forensic acquisition and analysis of Android devices over ADB**. It pulls call logs, contacts, SMS/MMS, browser history, calendar, installed apps, Wi‑Fi, accounts, usage statistics, logs and network statistics from a connected phone, then runs statistical, machine‑learning and heuristic analyses on them. It can also produce an **AI‑written investigation report** (Google Gemini online, or a local Ollama model offline), export it as a PDF, and answer investigator questions about the extracted data.
+A Streamlit web application and cross-platform command-line tool (Linux, Windows, macOS) for **forensic acquisition and analysis of Android devices over ADB**. It pulls call logs, contacts, SMS/MMS, browser history, calendar, installed apps, Wi‑Fi, accounts, usage statistics, logs and network statistics from a connected phone, then runs statistical, machine‑learning and heuristic analyses on them. It can also produce an **AI‑written investigation report** (Google Gemini online, or a local Ollama model offline), export it as a PDF, and answer investigator questions about the extracted data.
 
 > **Legal notice:** This tool reads highly sensitive personal data. Only use it on devices you own or have explicit, documented authorization to examine. Do not share exported data without consent.
 
@@ -15,6 +15,8 @@ A Streamlit web application for **forensic acquisition and analysis of Android d
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Running the app](#running-the-app)
+- [Command-line interface (Linux / Windows / macOS)](#command-line-interface-linux--windows--macos)
+- [Platform setup notes](#platform-setup-notes)
 - [Usage walkthrough](#usage-walkthrough)
 - [The UI tabs](#the-ui-tabs)
 - [Analysis methods](#analysis-methods)
@@ -57,6 +59,10 @@ A Streamlit web application for **forensic acquisition and analysis of Android d
 - Executive summary and an investigator **Q&A chat** that answers only from the extracted data
 - CSV export of the filtered call log and download of the raw ADB output
 
+**Command line**
+- `cli.py` runs every step from a terminal on Linux, Windows or macOS, with no browser needed
+- Saves each acquisition to a case folder with SHA-256 hashes, so analysis can be repeated offline on any machine
+
 ---
 
 ## How it works
@@ -87,7 +93,8 @@ A Streamlit web application for **forensic acquisition and analysis of Android d
 - Every device interaction goes through `helper.run_adb_cmd`, which finds the `adb` binary itself (see [Configuration](#configuration)).
 - `adb shell content query` output (`Row: 0 key=value, key=value, ...`) is turned into dictionaries by `helper.parse_content_query`.
 - Phone numbers are normalized to digits (and trimmed to the last 10 digits, dropping a `91` country code) so call logs, contacts and SMS match each other.
-- All extracted and derived data is kept in `st.session_state`. Nothing is written to disk unless you download an export.
+- In the web UI, all extracted and derived data is kept in `st.session_state`. Nothing is written to disk unless you download an export.
+- The CLI writes raw ADB output to a case folder first, then parses and analyzes from those files with the same modules the web UI uses.
 
 ---
 
@@ -96,7 +103,9 @@ A Streamlit web application for **forensic acquisition and analysis of Android d
 | File | Lines | Responsibility |
 |---|---|---|
 | `app.py` | ~2300 | Streamlit entry point: login, sidebar controls, acquisition, filters, and all UI tabs |
-| `helper.py` | ~250 | Finding ADB, running commands, fetching call logs/contacts/device info, parsing `content query` output, phone-number normalization |
+| `cli.py` | ~800 | Command-line interface: `devices`, `info`, `extract`, `analyze`, `report`, `ask`, `ui` |
+| `callaudit` / `callaudit.bat` | | Launchers for the CLI on Linux/macOS and on Windows |
+| `helper.py` | ~300 | Finding ADB on Windows/Linux/macOS, running commands, fetching call logs/contacts/device info, parsing `content query` output, phone-number normalization |
 | `forensic_extractors.py` | ~370 | Fetching SMS, MMS, contacts, browser, calendar, packages, usage, Wi‑Fi, Bluetooth, netstats, media, downloads, logcat, accounts, notifications, owner profile; parsers for SMS/packages/Wi‑Fi/calendar |
 | `preprocessor.py` | ~520 | Normalizing call logs into a DataFrame, aggregations, KMeans clustering, rule-based detection, IsolationForest, ARIMA forecast, natural-language summaries, device prop/battery parsing, owner-name inference |
 | `forensics.py` | ~970 | Investigative analyses: critical window, bursts, burner phones, relationships, behavior change, OPSEC, timeline, suspicious SMS/apps, logcat security, network/account/Bluetooth/browser/usage/netstats analysis |
@@ -116,20 +125,35 @@ A Streamlit web application for **forensic acquisition and analysis of Android d
 - An Android device with **Developer options → USB debugging** turned on, authorized for this computer
 - Optional: a **Google Gemini API key** for online AI reports
 - Optional: **[Ollama](https://ollama.com)** running locally with the `llama3` model for offline AI reports
+- Optional: Google Chrome or Chromium, used by `kaleido` to draw the charts in the PDF report. Without it the PDF is still created, just without charts. Run `plotly_get_chrome` to download a copy.
 
-Python packages (`requirements.txt`): `streamlit`, `pandas`, `numpy`, `matplotlib`, `plotly`, `scikit-learn`, `statsmodels`, `networkx`, `reportlab`, `Pillow`, `google-genai`, `requests`.
+Python packages (`requirements.txt`): `streamlit`, `pandas`, `numpy`, `matplotlib`, `plotly`, `kaleido`, `scikit-learn`, `statsmodels`, `networkx`, `reportlab`, `Pillow`, `google-genai`, `requests`.
 
 ---
 
 ## Installation
 
+**Linux / macOS**
+
 ```bash
 git clone https://github.com/aditya-stv/callaudit.git
 cd callaudit
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+**Windows (PowerShell or Command Prompt)**
+
+```bat
+git clone https://github.com/aditya-stv/callaudit.git
+cd callaudit
+py -3 -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+If PowerShell blocks `activate`, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use Command Prompt.
 
 Check that ADB can see your phone:
 
@@ -147,10 +171,25 @@ Settings are read from **environment variables first**, then from **Streamlit se
 
 | Name | Required | Purpose |
 |---|---|---|
-| `APP_USERNAME` | **Yes** | Investigator login user ID |
-| `APP_PASSWORD` | **Yes** | Investigator login password |
+| `APP_USERNAME` | Web UI only | Investigator login user ID |
+| `APP_PASSWORD` | Web UI only | Investigator login password |
 | `GEMINI_API_KEY` | For online AI | Google Gemini API key (model `gemini-2.5-flash`) |
-| `ADB_PATH` | No | Full path to the `adb` executable, if it isn't detected automatically |
+| `AI_BACKEND` | No | `auto` (default), `gemini` or `ollama`. The CLI's `--ai` option sets it |
+| `OLLAMA_BASE_URL` | No | Ollama server (default `http://localhost:11434`) |
+| `OLLAMA_MODEL` | No | Ollama model (default `llama3`) |
+| `ADB_PATH` | No | Full path to the `adb` executable, if it isn't detected automatically. The CLI's `--adb` option sets it |
+| `ANDROID_HOME` / `ANDROID_SDK_ROOT` | No | Android SDK folder; `platform-tools/adb` inside it is checked |
+| `ANDROID_SERIAL` | No | Which device to use when several are connected (standard adb variable). The CLI's `--serial` option sets it |
+
+Set an environment variable for the current terminal session:
+
+```bash
+export GEMINI_API_KEY="your-key"        # Linux / macOS
+```
+```bat
+set GEMINI_API_KEY=your-key             :: Windows Command Prompt
+$env:GEMINI_API_KEY = "your-key"        # Windows PowerShell
+```
 
 Example `.streamlit/secrets.toml`:
 
@@ -163,9 +202,12 @@ GEMINI_API_KEY = "your-gemini-key"
 **How `adb` is found** (`helper._resolve_adb_path`):
 1. The `ADB_PATH` environment variable, if that file exists
 2. `adb` on the system `PATH`
-3. Common Windows locations: `C:\platform-tools\adb.exe`, `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`, `C:\Program Files\Android\platform-tools\adb.exe`, `D:\platform-tools\adb.exe`
+3. `ANDROID_HOME` / `ANDROID_SDK_ROOT`, then common install locations for the current OS:
+   - **Windows:** `C:\platform-tools\adb.exe`, `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`, `C:\Program Files\Android\platform-tools\adb.exe`, `C:\Program Files (x86)\Android\android-sdk\platform-tools\adb.exe`, `D:\platform-tools\adb.exe`
+   - **Linux:** `~/Android/Sdk/platform-tools/adb`, `~/platform-tools/adb`, `/opt/platform-tools/adb`, `/usr/lib/android-sdk/platform-tools/adb`, `/usr/local/bin/adb`, `/usr/bin/adb`, `/snap/bin/adb`
+   - **macOS:** `~/Library/Android/sdk/platform-tools/adb`, `/opt/homebrew/bin/adb`, `/usr/local/bin/adb`
 
-**Ollama** settings are constants in `report_generator.py`: `OLLAMA_BASE_URL = "http://localhost:11434"` and `OLLAMA_MODEL = "llama3"`. To set it up:
+**Ollama** uses `http://localhost:11434` and the `llama3` model unless `OLLAMA_BASE_URL` / `OLLAMA_MODEL` say otherwise. To set it up:
 
 ```bash
 ollama pull llama3
@@ -178,6 +220,8 @@ ollama serve
 
 ```bash
 streamlit run app.py
+# or, on any OS:
+python cli.py ui
 ```
 
 Then open <http://localhost:8501> and log in with `APP_USERNAME` / `APP_PASSWORD`.
@@ -188,7 +232,116 @@ Then open <http://localhost:8501> and log in with `APP_USERNAME` / `APP_PASSWORD
 
 ---
 
+## Command-line interface (Linux / Windows / macOS)
+
+`cli.py` runs the whole pipeline from a terminal, with no browser or login screen. It uses only the Python standard library on top of the project's requirements, so the same commands work in bash, zsh, PowerShell and Command Prompt.
+
+```text
+python cli.py <command> [options]          # any OS
+./callaudit <command> [options]            # Linux / macOS launcher
+callaudit <command> [options]              # Windows launcher (callaudit.bat)
+```
+
+On Windows, use `py -3 cli.py ...` if `python` isn't on your `PATH`.
+
+### Commands
+
+| Command | Needs device | What it does |
+|---|---|---|
+| `devices` | yes | Shows the `adb` binary in use and the connected devices |
+| `info` | yes | Shows brand, model, Android version, SDK, serial, battery and uptime |
+| `extract` | yes | Acquires data into a case folder (all 22 sources by default) |
+| `analyze CASE_DIR` | no | Parses the case and runs every analysis; prints a summary and saves CSV/JSON |
+| `report CASE_DIR` | no | Writes the AI report to `report.md` and `report.pdf` |
+| `ask CASE_DIR [QUESTION]` | no | Answers a question from the case data, or starts an interactive Q&A session |
+| `ui` | no | Starts the Streamlit web interface |
+
+Global options go **before** the command: `-s/--serial SERIAL` picks a device when several are connected, and `--adb PATH` sets the adb binary. Run `python cli.py <command> --help` for every option.
+
+### Typical session
+
+```bash
+python cli.py devices
+python cli.py extract -o cases/CASE-001                 # full acquisition
+python cli.py analyze cases/CASE-001                    # tables in the terminal + files on disk
+python cli.py report  cases/CASE-001 --investigator "A. Investigator" --case-number CASE-001
+python cli.py ask     cases/CASE-001 "Which numbers called between midnight and 5am?"
+python cli.py ask     cases/CASE-001                    # interactive; type 'exit' to quit
+```
+
+Windows example (Command Prompt), with two phones connected and adb in a custom folder:
+
+```bat
+callaudit --adb C:\tools\platform-tools\adb.exe --serial R58N123ABC extract -o cases\CASE-002 --quick
+callaudit analyze cases\CASE-002 --from 2026-09-01 --to 2026-09-30 --types INCOMING,OUTGOING
+```
+
+### `extract` options
+
+| Option | Meaning |
+|---|---|
+| `-o DIR` | Case folder (default `cases/CASE-<timestamp>`). Running again into the same folder updates the manifest |
+| `--only calls,contacts,sms` | Acquire only these sources |
+| `--skip logcat,media_images` | Leave these sources out |
+| `--quick` | Only `calls`, `contacts`, `device_props`, `battery`, `uptime` |
+| `--list` | List all source names |
+
+Sources: `calls`, `contacts`, `device_props`, `battery`, `meminfo`, `uptime`, `sms`, `mms`, `browser_bookmarks`, `browser_searches`, `calendar`, `apps`, `app_usage`, `batterystats`, `wifi`, `bluetooth`, `netstats`, `media_images`, `accounts`, `logcat`, `notifications`, `profile`. If one source fails (for example, the ROM blocks that provider), the others still run and the failure is recorded in the manifest.
+
+### `analyze`, `report` and `ask` options
+
+| Option | Meaning |
+|---|---|
+| `--from YYYY-MM-DD` / `--to YYYY-MM-DD` | Date filter for calls |
+| `--types INCOMING,OUTGOING,MISSED,REJECTED,UNKNOWN` | Call type filter |
+| `--incident "YYYY-MM-DD HH:MM"` and `--window HOURS` | Critical-window analysis around an incident (default ±24 h) |
+| `--clusters N`, `--contamination X`, `--forecast-days N`, `--top N` | Same parameters as the web UI's Settings tab |
+| `analyze --json` | Print all results as JSON (for scripts) instead of tables |
+| `analyze -o DIR` / `report -o DIR` | Write outputs somewhere other than the case folder |
+| `report --ai {auto,gemini,ollama}` / `ask --ai ...` | Choose the AI backend; `--ollama-model NAME` picks the Ollama model |
+| `report --owner`, `--investigator`, `--case-number`, `--classification`, `--no-pdf` | Report metadata and output |
+| `ask --fast` | Skip re-running the analyses before answering |
+
+### Case folder layout
+
+```text
+cases/CASE-001/
+├── manifest.json        # host OS, adb path/devices, and per-source status, size, SHA-256, timestamp
+├── raw/                 # exact adb output per source (calls.txt, sms.txt, ...)
+├── parsed/              # calls.csv, contacts.csv, sms.csv, apps.csv, calendar.csv
+├── analysis/            # one CSV/JSON per analysis (burner_phones.csv, contact_risk_scores.csv, ...)
+├── report.md
+└── report.pdf
+```
+
+Because `analyze`, `report` and `ask` only read the case folder, you can acquire on one machine (for example, a Windows laptop next to the phone) and analyze on another (for example, a Linux workstation). The `cases/` folder is gitignored so evidence is never committed by accident.
+
+Exit codes: `0` success, `1` failure (no device, no data, AI or PDF error), `2` invalid arguments, `130` interrupted.
+
+---
+
+## Platform setup notes
+
+**Linux**
+- Install adb with `sudo apt install adb` (Debian/Ubuntu), `sudo dnf install android-tools` (Fedora) or `sudo pacman -S android-tools` (Arch), or unpack Platform-Tools to `~/platform-tools`.
+- If `adb devices` shows `no permissions`, install your distribution's `android-udev-rules` package (or add a udev rule for the phone's USB vendor ID), add yourself to the `plugdev` group, reconnect the phone and run `adb kill-server`.
+- The CLI works on headless servers and over SSH. Charts use a non-GUI backend, and `python cli.py ui --headless` serves the web UI without opening a browser.
+
+**Windows**
+- Unzip Platform-Tools to `C:\platform-tools`, which is detected automatically, or add its folder to `PATH`.
+- Some phones (Samsung, Xiaomi and others) need the OEM USB driver or the Google USB Driver before `adb devices` lists them.
+- `adb` runs without opening console windows, and output is printed as UTF-8, so contact names in any language display correctly in Windows Terminal. Older `cmd.exe` fonts may still show some characters as `?`.
+
+**macOS**
+- `brew install android-platform-tools`, or unpack Platform-Tools to `~/Library/Android/sdk/platform-tools`.
+
+**Wireless ADB (all platforms)**: `adb pair IP:PORT` (Android 11+) or `adb tcpip 5555` followed by `adb connect IP:5555`, then use the CLI as usual. Add `--serial IP:5555` if a USB device is also connected.
+
+---
+
 ## Usage walkthrough
+
+This section describes the web UI. For the terminal, see [Command-line interface](#command-line-interface-linux--windows--macos).
 
 1. **Log in** with your investigator credentials.
 2. In the sidebar under **Controls & Device Info**:
@@ -255,9 +408,10 @@ Maps Android `type` codes (`1` INCOMING, `2` OUTGOING, `3` MISSED, `5` REJECTED,
 ## AI reporting and Q&A
 
 **Backend selection** (`report_generator.get_available_ai_backend`):
-1. If the internet is reachable (a TCP check to `8.8.8.8:53`), use **Gemini** (`gemini-2.5-flash`). This requires `GEMINI_API_KEY`.
-2. Otherwise, if Ollama answers at `localhost:11434`, use **Ollama** (`llama3`).
-3. Otherwise, show an error.
+1. If `AI_BACKEND` (or the CLI's `--ai`) is `gemini` or `ollama`, use that backend.
+2. Otherwise, if the internet is reachable (a TCP check to `8.8.8.8:53`) **and** `GEMINI_API_KEY` is set, use **Gemini** (`gemini-2.5-flash`).
+3. Otherwise, if Ollama answers at `OLLAMA_BASE_URL`, use **Ollama** (`OLLAMA_MODEL`, default `llama3`).
+4. Otherwise, show an error.
 
 **Comprehensive report:** fill in the case details in the Forensics tab and click **Generate AI Forensic Report**. The prompt includes device info, call statistics, every forensic analysis, and the extra sources (SMS, apps, accounts, Wi‑Fi, browser, usage and so on). The report has nine sections:
 
@@ -341,9 +495,8 @@ Parsers: `parse_sms`, `parse_installed_packages`, `parse_wifi_networks`, `parse_
 These are visible in the current code and are worth knowing before you rely on the results:
 
 - **Phone-number normalization is India-specific.** It drops a leading `91` from 12-digit numbers and otherwise keeps the last 10 digits. Numbers from other countries with different lengths may match incorrectly.
-- **Apps of interest may show no results.** The "apps of forensic interest" detection and the app KPI on the Overview tab read `st.session_state["installed_packages"]`, but extraction stores parsed apps under `apps_data`.
-- **Battery-drain checks have no input.** The usage-anomaly detector accepts `batterystats_raw`, but no extraction button fills that session key (`fetch_battery_stats` exists but isn't wired into the UI).
-- **The AI backend is chosen by connectivity, not by configuration.** With internet access, Gemini is always chosen, even when no `GEMINI_API_KEY` is set (that produces a configuration error instead of falling back to Ollama).
+- **Apps of interest may show no results in the web UI.** The "apps of forensic interest" detection and the app KPI on the Overview tab read `st.session_state["installed_packages"]`, but extraction stores parsed apps under `apps_data`. The CLI passes the parsed apps directly, so it isn't affected.
+- **Battery-drain checks have no input in the web UI.** The usage-anomaly detector accepts `batterystats_raw`, but no web UI button fills that session key. The CLI acquires it as the `batterystats` source.
 - `report_generator.py` defines `generate_executive_summary` twice; the second definition (later in the file) is the one that runs.
 - `logcat` is limited to the last 1000 lines.
 - Analyses use on-device timestamps as naive local datetimes; timezone is not normalized.

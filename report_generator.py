@@ -18,15 +18,29 @@ import requests
 # Import visualization functions
 try:
     from forensic_visualizations import (
+        create_timeline_chart,
+        create_call_type_distribution,
+        create_hourly_activity_chart,
         create_duration_histogram,
         create_top_contacts_chart,
         create_behavioral_heatmap,
         create_burner_phone_chart,
         create_sms_activity_chart,
         create_top_sms_contacts_chart,
+        create_sms_hourly_chart,
+        create_sms_length_dist,
         create_browser_activity_chart,
+        create_browser_domain_pie,
         create_app_usage_chart,
+        create_app_category_chart,
+        create_app_foreground_pie,
         create_calendar_distribution_chart,
+        create_log_intensity_chart,
+        create_wifi_frequency_chart,
+        create_bluetooth_category_chart,
+        create_data_usage_bar,
+        create_tx_rx_scatter,
+        create_account_distribution_pie,
     )
     VISUALIZATIONS_AVAILABLE = True
 except ImportError:
@@ -45,8 +59,8 @@ def _get_gemini_api_key():
         return None
 
 # Configure Ollama (Local LLM)
-OLLAMA_BASE_URL = "http://localhost:11434"  # Default Ollama endpoint
-OLLAMA_MODEL = "llama3"  # Options: llama3, mistral, llama2, etc.
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")  # Default Ollama endpoint
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3")  # Options: llama3, mistral, llama2, etc.
 
 def check_internet_connection():
     """Check if internet connection is available."""
@@ -66,10 +80,18 @@ def check_ollama_available():
         return False
 
 def get_available_ai_backend():
-    """Determine which AI backend to use based on availability."""
-    has_internet = check_internet_connection()
+    """Determine which AI backend to use based on availability.
+
+    Set AI_BACKEND=gemini or AI_BACKEND=ollama to force one; the default ("auto")
+    prefers Gemini when online with an API key, otherwise a local Ollama server.
+    """
+    forced = os.environ.get("AI_BACKEND", "auto").strip().lower()
+    if forced in ("gemini", "ollama"):
+        return forced
+
+    has_internet = check_internet_connection() and bool(_get_gemini_api_key())
     has_ollama = check_ollama_available()
-    
+
     if has_internet:
         return "gemini"
     elif has_ollama:
@@ -548,7 +570,10 @@ def generate_pdf_report(report_text, case_info, output_path, df=None, full_foren
                         img_bytes = fig.to_image(format="png", width=700, height=400)
                         chart_images[chart_name] = img_bytes
                     except Exception as e:
-                        print(f"Error converting {chart_name} to image: {e}")
+                        # Usually kaleido or Chrome is missing; every other chart would fail the same way
+                        print(f"Charts skipped in PDF ({chart_name}: {e}). "
+                              "Install 'kaleido' and Chrome (run 'plotly_get_chrome') to include them.")
+                        break
         except Exception as e:
             print(f"Error generating charts: {e}")
     
