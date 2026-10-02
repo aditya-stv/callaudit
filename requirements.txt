@@ -5,9 +5,9 @@ scikit-learn
 statsmodels
 networkx
 plotly
+kaleido
 reportlab
 Pillow
 numpy
-statsmodels
 google-genai
 requests

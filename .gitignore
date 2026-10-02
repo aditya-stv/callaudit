@@ -16,3 +16,6 @@ research_paper/
 *.txt
 !requirements.txt
 !README.md
+
+# Acquired case folders contain evidence; never commit them
+cases/

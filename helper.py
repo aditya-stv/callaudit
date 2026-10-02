@@ -3,10 +3,57 @@ import subprocess
 import re
 import os
 import shutil
+import sys
 from typing import List
 
+IS_WINDOWS = os.name == "nt"
+ADB_EXE = "adb.exe" if IS_WINDOWS else "adb"
+
+# Hide the console window that adb would otherwise flash open on Windows
+_SUBPROCESS_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
+
+
+def _candidate_adb_paths() -> List[str]:
+    """Common platform-tools install locations for the current OS."""
+    home = os.path.expanduser("~")
+    candidates = []
+
+    # Android SDK environment variables work on every OS
+    for var in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        sdk = os.environ.get(var)
+        if sdk:
+            candidates.append(os.path.join(sdk, "platform-tools", ADB_EXE))
+
+    if IS_WINDOWS:
+        candidates += [
+            r"C:\platform-tools\adb.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"),
+            os.path.expandvars(r"%USERPROFILE%\AppData\Local\Android\Sdk\platform-tools\adb.exe"),
+            r"C:\Program Files\Android\platform-tools\adb.exe",
+            r"C:\Program Files (x86)\Android\android-sdk\platform-tools\adb.exe",
+            r"D:\platform-tools\adb.exe",
+        ]
+    elif sys.platform == "darwin":
+        candidates += [
+            os.path.join(home, "Library", "Android", "sdk", "platform-tools", "adb"),
+            "/opt/homebrew/bin/adb",
+            "/usr/local/bin/adb",
+        ]
+    else:
+        candidates += [
+            os.path.join(home, "Android", "Sdk", "platform-tools", "adb"),
+            os.path.join(home, "platform-tools", "adb"),
+            "/opt/platform-tools/adb",
+            "/usr/lib/android-sdk/platform-tools/adb",
+            "/usr/local/bin/adb",
+            "/usr/bin/adb",
+            "/snap/bin/adb",
+        ]
+    return candidates
+
+
 def _resolve_adb_path() -> str:
-    """Auto-detect adb path across different machines and environments."""
+    """Auto-detect adb path across Windows, Linux and macOS."""
     # 1. Check custom environment variable
     env_adb = os.environ.get("ADB_PATH")
     if env_adb and os.path.exists(env_adb):
@@ -17,23 +64,35 @@ def _resolve_adb_path() -> str:
     if which_adb:
         return which_adb
 
-    # 3. Check common default installation locations on Windows
-    candidate_paths = [
-        r"C:\platform-tools\adb.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"),
-        os.path.expandvars(r"%USERPROFILE%\AppData\Local\Android\Sdk\platform-tools\adb.exe"),
-        r"C:\Program Files\Android\platform-tools\adb.exe",
-        r"D:\platform-tools\adb.exe",
-    ]
-    for path in candidate_paths:
+    # 3. Check common default installation locations for this OS
+    for path in _candidate_adb_paths():
         if os.path.exists(path):
             return path
 
-    # Fallback to "adb" expecting it in PATH or giving clear guidance
-    return r"C:\platform-tools\adb.exe"
+    # Fallback to bare "adb"; run_adb_cmd reports a clear error if it is missing
+    return ADB_EXE
 
 # Set resolved ADB path
 ADB_PATH = _resolve_adb_path()
+
+
+def _adb_install_hint() -> str:
+    if IS_WINDOWS:
+        return (
+            "2. Extract it to 'C:\\platform-tools' (so 'C:\\platform-tools\\adb.exe' exists)\n"
+            "3. Or add its folder to your PATH, or set the ADB_PATH environment variable."
+        )
+    if sys.platform == "darwin":
+        return (
+            "2. Or install it with Homebrew: brew install android-platform-tools\n"
+            "3. Or add its folder to your PATH, or set the ADB_PATH environment variable."
+        )
+    return (
+        "2. Or install it with your package manager, e.g. 'sudo apt install adb' (Debian/Ubuntu)\n"
+        "   or 'sudo dnf install android-tools' (Fedora)\n"
+        "3. Or add its folder to your PATH, or set the ADB_PATH environment variable.\n"
+        "   If the device shows as 'no permissions', add a udev rule or run 'adb kill-server' and retry."
+    )
 
 
 def run_adb_cmd(cmd_args: List[str], timeout: int = 30) -> str:
@@ -42,14 +101,17 @@ def run_adb_cmd(cmd_args: List[str], timeout: int = 30) -> str:
     Returns decoded stdout or raises RuntimeError on failure.
     """
     global ADB_PATH
-    # If currently cached ADB_PATH doesn't exist, re-resolve
-    if not os.path.exists(ADB_PATH) and shutil.which("adb"):
-        ADB_PATH = shutil.which("adb")
+    # If the cached ADB_PATH no longer exists, re-resolve
+    if not os.path.exists(ADB_PATH) and not shutil.which(ADB_PATH):
+        ADB_PATH = _resolve_adb_path()
 
     cmd = [ADB_PATH] + cmd_args
     try:
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=timeout)
-        return out.decode(errors="ignore")
+        out = subprocess.check_output(
+            cmd, stderr=subprocess.STDOUT, timeout=timeout, creationflags=_SUBPROCESS_FLAGS
+        )
+        # Older adb builds on Windows emit CRLF (or CR CR LF) line endings
+        return out.decode("utf-8", errors="ignore").replace("\r\r\n", "\n").replace("\r\n", "\n")
     except subprocess.CalledProcessError as e:
         out = e.output.decode(errors="ignore") if hasattr(e, "output") else str(e)
         raise RuntimeError(f"ADB command failed:\n{out}")
@@ -59,8 +121,7 @@ def run_adb_cmd(cmd_args: List[str], timeout: int = 30) -> str:
             "Please ensure Android SDK platform-tools is installed.\n"
             "You can:\n"
             "1. Download platform-tools from: https://developer.android.com/tools/releases/platform-tools\n"
-            "2. Extract it to 'C:\\platform-tools' (so 'C:\\platform-tools\\adb.exe' exists)\n"
-            "3. Or add its folder to your system PATH environment variable."
+            + _adb_install_hint()
         )
     except Exception as e:
         raise RuntimeError(f"Failed to run adb command: {e}")

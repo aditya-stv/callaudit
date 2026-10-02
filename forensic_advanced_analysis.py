@@ -7,6 +7,12 @@ from datetime import datetime, timedelta
 from collections import defaultdict, Counter
 
 
+def _duration_seconds(df):
+    """Call durations in seconds; 'duration' holds HH:MM:SS text, so prefer 'duration_s'."""
+    col = 'duration_s' if 'duration_s' in df.columns else 'duration'
+    return pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+
 def build_communication_network(call_df, sms_df=None):
     """
     Build a network graph from call and SMS data.
@@ -333,7 +339,7 @@ def calculate_contact_risk_scores(call_df, sms_df=None, apps_df=None):
         # Factor 2: Very short calls (potential burner)
         try:
             # Ensure duration is numeric
-            durations = pd.to_numeric(contact_calls['duration'], errors='coerce').fillna(0)
+            durations = _duration_seconds(contact_calls)
             short_calls = (durations < 10).sum()
             if short_calls > 5:
                 score += 15
@@ -347,7 +353,11 @@ def calculate_contact_risk_scores(call_df, sms_df=None, apps_df=None):
             reasons.append(f"High frequency ({len(contact_calls)} calls)")
         
         # Factor 4: Unknown number (no name)
-        if number.startswith('+') or number.isdigit():
+        if 'saved_name' in contact_calls.columns:
+            is_unsaved = not contact_calls['saved_name'].fillna('').astype(str).str.strip().any()
+        else:
+            is_unsaved = number.startswith('+') or number.isdigit()
+        if is_unsaved:
             score += 10
             reasons.append("Unknown/unsaved number")
         
@@ -363,7 +373,7 @@ def calculate_contact_risk_scores(call_df, sms_df=None, apps_df=None):
         
         # Safe duration sum
         try:
-            total_duration = pd.to_numeric(contact_calls['duration'], errors='coerce').fillna(0).sum()
+            total_duration = _duration_seconds(contact_calls).sum()
         except Exception:
             total_duration = 0
         
@@ -618,7 +628,7 @@ def detect_behavioral_anomalies(call_df, sms_df=None):
             })
     
     # Anomaly 3: Very short calls (burner indicator)
-    durations = pd.to_numeric(call_df['duration'], errors='coerce').fillna(0)
+    durations = _duration_seconds(call_df)
     short_calls_count = (durations < 10).sum()
     if short_calls_count > len(call_df) * 0.3:
         anomalies.append({
